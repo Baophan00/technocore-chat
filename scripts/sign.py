@@ -295,19 +295,26 @@ def check_note(root: str, body: str) -> int:
     """
     key, live, now = public_key(root), 0, int(time.time())
     records = delegations(body)
-    current = newest(records)
+    # Verify signatures before ranking. Bug #782: ranking all records
+    # (including forged ones) let a forged high-nonce record suppress a real
+    # delegation as SUPERSEDED.
+    verified = []
     for i, (agent, scope, expires, nonce, sig) in enumerate(records):
         try:
             key.verify(
                 base64.urlsafe_b64decode(sig + "=="),
                 delegation(root, agent, scope, expires, nonce).encode(),
             )
+            verified.append(i)
         except (InvalidSignature, ValueError, TypeError):
             # Not "invalid": *forged, or for somebody else*. A record that fails here was
             # signed by a key that is not this root, which in a note anyone can write to is
             # the ordinary case and not an error.
             print(f"FORGED     {agent} {scope}  (not signed by {root[:20]}...)")
             continue
+    current = newest([records[i] for i in verified])
+    for j, i in enumerate(verified):
+        agent, scope, expires, nonce, sig = records[i]
         # DIGITS_RE and not str.isdigit(): the same trap PR #54 fixed for nonces, in the
         # other direction. isdigit() accepts Unicode digits ('١٢٣' is True and int()s to
         # 123) which no JavaScript /[0-9]/ will match, and it rejects spellings Number()
@@ -320,7 +327,7 @@ def check_note(root: str, body: str) -> int:
             continue
         # Checked after the signature and the expiry, so a superseded record is only ever
         # reported as superseded when it was otherwise a real, live grant.
-        if i not in current:
+        if j not in current:
             print(f"SUPERSEDED {agent} {scope}  (a higher nonce than {nonce} names this key)")
             continue
         # Rounded up: a delegation issued for 30 days is "30d left" a second later, where
