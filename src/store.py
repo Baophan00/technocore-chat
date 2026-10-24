@@ -1314,11 +1314,13 @@ def room_stats(root: Path, limit: int = DEFAULT_LIMIT) -> dict:
     now = time.time()
     entries = []
     total_rooms = 0
+    listed_rooms = 0
     for e in _walk(root / "rooms", ".jsonl"):
         total_rooms += 1
         name = e.name[: -len(".jsonl")]
         if not _listable(name):
             continue
+        listed_rooms += 1
         try:
             st = e.stat()
         except OSError:
@@ -1346,7 +1348,13 @@ def room_stats(root: Path, limit: int = DEFAULT_LIMIT) -> dict:
     return {
         "rooms": shown,
         "total": len(entries),
-        "occupied": total_rooms,
+        # A boolean, never the count. `total` counts only rooms this listing may name, so
+        # a public occupancy figure would move the moment somebody opened a `p-` room and
+        # announce that room's existence (#277). Whether *any* unlisted room exists is the
+        # only bit /rooms needs, to stop telling a caller to create a room it cannot
+        # create; the exact split lives on the token-gated /stats (store.service_stats
+        # already returns rooms.total and rooms.unlisted).
+        "has_unlisted": total_rooms > listed_rooms,
         "capacity": MAX_ROOMS,
         "bytes": sum(e[1] for e in entries),
         # Both bounds, because either can be the one that bites: a service can be far from

@@ -467,7 +467,7 @@ def test_rooms_overview_hides_private_rooms_and_survives_an_empty_store(client):
     assert client.get("/rooms?format=json").json() == {
         "rooms": [],
         "total": 0,
-        "occupied": 0,
+        "has_unlisted": False,
         "capacity": store.MAX_ROOMS,
         "bytes": 0,
         "bytes_capacity": store.MAX_TOTAL_ROOM_BYTES,
@@ -491,7 +491,7 @@ def test_rooms_overview_hides_private_rooms_and_survives_an_empty_store(client):
     client.get("/r/p-secret/say/bot/hi")
     view = client.get("/rooms?format=json").json()
     assert view["total"] == 0 and view["rooms"] == []  # p- stays invisible in stats too
-    assert view["occupied"] == 1  # p-secret exists but is unlisted, so occupancy sees it
+    assert view["has_unlisted"] is True  # p-secret exists, and only that is public
 
 
 def test_rooms_overview_does_not_claim_empty_when_all_rooms_unlisted(client):
@@ -504,6 +504,35 @@ def test_rooms_overview_does_not_claim_empty_when_all_rooms_unlisted(client):
     text = client.get("/rooms").text
     assert "no rooms yet" not in text, "an occupied-but-unlisted store is not empty"
     assert "unlisted" in text, "the overview should say the rooms are unlisted"
+
+
+def test_rooms_overview_never_publishes_how_many_unlisted_rooms(client, tmp_path):
+    """#277: the unlisted population is not countable from a public read.
+
+    Saying "rooms exist but are unlisted" is what breaks the #312 closed loop; saying *how
+    many* is a different thing. A public total that changes when somebody opens a `p-` room
+    announces that room, which is exactly the signal `/rooms` and `/r/events` are built not
+    to emit. So the public text has to be byte-identical for one unlisted room and for two,
+    the JSON carries a boolean rather than a figure, and the figure lives on the token-gated
+    `/stats`, which already splits `rooms.total` from `rooms.unlisted`.
+    """
+    import store
+
+    client.get("/r/p-one/say/bot/hi")
+    one = client.get("/rooms").text
+    client.get("/r/p-two/say/bot/hi")
+    two = client.get("/rooms").text
+
+    assert one == two, "the public overview changed when a second unlisted room opened"
+    assert "unlisted" in two
+
+    view = client.get("/rooms?format=json").json()
+    assert view["has_unlisted"] is True
+    assert "occupied" not in view, "an exact occupancy figure is not a public field"
+    assert view["total"] == 0 and view["rooms"] == []
+
+    # The count is still available where it is allowed to be: the token-gated `/stats`.
+    assert store.service_stats(tmp_path)["rooms"]["unlisted"] == 2
 
 
 def test_rooms_overview_limits_the_tail_reads_it_does(client, tmp_path):
